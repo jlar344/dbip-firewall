@@ -16,9 +16,19 @@ dbip_portal_port: 8443
 dbip_ssh_port: 2224
 dbip_admin_ssh_port: 22
 
-# Databases reachable only via local forward targets
-dbip_forward_mysql: "127.0.0.1:3306"
-dbip_forward_postgres: "127.0.0.1:5432"
+# Single source of truth for SSH local-forward targets (sshd + keys + portal UI).
+# Override per host. DeximDB-style both engines:
+#   - {host: "127.0.0.1", port: 3306}
+#   - {host: "127.0.0.1", port: 5432}
+# datacorp-bbdd (PgBouncer, not direct Postgres):
+#   - {host: "127.0.0.1", port: 6432}
+dbip_forward_destinations: []
+# Example default for a dual-engine host (set in inventory, not here):
+# dbip_forward_destinations:
+#   - host: "127.0.0.1"
+#     port: 3306
+#   - host: "127.0.0.1"
+#     port: 5432
 
 # Portal opens ONLY the tunnel SSH port dynamically
 dbip_dynamic_firewall_ports:

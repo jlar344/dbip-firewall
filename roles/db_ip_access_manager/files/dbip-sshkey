@@ -26,8 +26,15 @@ ALLOWED_KEY_TYPES = {
 BEGIN = "# BEGIN db-ip-portal managed key"
 END = "# END db-ip-portal managed key"
 
-FORWARD_MYSQL = os.environ.get("DBIP_FORWARD_MYSQL", "127.0.0.1:3306")
-FORWARD_PG = os.environ.get("DBIP_FORWARD_POSTGRES", "127.0.0.1:5432")
+_INSTALL_ROOT = os.environ.get("DBIP_INSTALL_ROOT", "/opt/db-ip-portal")
+if _INSTALL_ROOT not in sys.path:
+    sys.path.insert(0, _INSTALL_ROOT)
+try:
+    from permit_open import PermitOpenError, key_options_prefix, load_permit_open
+except ImportError:
+    PermitOpenError = RuntimeError  # type: ignore[misc,assignment]
+    key_options_prefix = None  # type: ignore[assignment]
+    load_permit_open = None  # type: ignore[assignment]
 
 
 def fail(message: str, code: int = 1) -> None:
@@ -35,12 +42,13 @@ def fail(message: str, code: int = 1) -> None:
     raise SystemExit(code)
 
 
-def key_options_prefix() -> str:
-    return (
-        "restrict,port-forwarding,"
-        f'permitopen="{FORWARD_MYSQL}",'
-        f'permitopen="{FORWARD_PG}" '
-    )
+def managed_key_prefix() -> str:
+    if key_options_prefix is None or load_permit_open is None:
+        fail("permit_open.py missing under DBIP_INSTALL_ROOT")
+    try:
+        return key_options_prefix(load_permit_open())
+    except PermitOpenError as exc:
+        fail(str(exc))
 
 
 def validate_user(username: str):
@@ -206,7 +214,7 @@ def install_key(username: str) -> None:
         if line.strip():
             new_managed.append(line)
 
-    new_managed.append(key_options_prefix() + public_key)
+    new_managed.append(managed_key_prefix() + public_key)
     write_auth(info, before, new_managed, after)
     print(
         json.dumps(

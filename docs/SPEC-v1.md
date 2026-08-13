@@ -15,3 +15,8 @@ Frozen from the DeximDB inventory + design review.
 11. TLS key never in Git.
 12. DeximDB `5432 Anywhere` / `0.0.0.0` binds = P1 after package works.
 13. Build package offline from production; no live mutation until verify.
+14. `dbip_forward_destinations` is the single source of truth for sshd
+    `PermitOpen`, `dbip-sshkey` `permitopen=`, and portal tunnel instructions.
+    Helper parses `DBIP_PERMIT_OPEN` (CSV `host:port` only; fail closed).
+    datacorp: `127.0.0.1:6432` (PgBouncer). Do not tunnel to `:5432` there.
+    Public `:6432` stays until an explicit post-tunnel gate.

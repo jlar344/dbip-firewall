@@ -1,11 +1,13 @@
 # Managed by Ansible — db_ip_access_manager
+# PermitOpen from dbip_forward_destinations (inventory source of truth)
 Match User prod_*
     PasswordAuthentication no
     KbdInteractiveAuthentication no
     PubkeyAuthentication yes
     AllowTcpForwarding local
     GatewayPorts no
-    PermitOpen {{ dbip_forward_mysql }} {{ dbip_forward_postgres }}
+    PermitOpen {% for d in dbip_forward_destinations %}{{ d.host }}:{{ d.port }}{% if not loop.last %} {% endif %}{% endfor %}
+
     PermitTTY no
     X11Forwarding no
     AllowAgentForwarding no

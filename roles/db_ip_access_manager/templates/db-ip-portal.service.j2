@@ -11,8 +11,8 @@ EnvironmentFile=-{{ dbip_env_file }}
 Environment=DBIP_SSH_PORT={{ dbip_ssh_port }}
 Environment=DBIP_DYNAMIC_PORTS={{ dbip_dynamic_firewall_ports | join(',') }}
 Environment=DBIP_FIREWALL_PROVIDER={{ dbip_firewall_provider }}
-Environment=DBIP_FORWARD_MYSQL={{ dbip_forward_mysql }}
-Environment=DBIP_FORWARD_POSTGRES={{ dbip_forward_postgres }}
+Environment=DBIP_PERMIT_OPEN={% for d in dbip_forward_destinations %}{{ d.host }}:{{ d.port }}{% if not loop.last %},{% endif %}{% endfor %}
+Environment=DBIP_INSTALL_ROOT={{ dbip_install_root }}
 Environment=DBIP_STATE_FILE={{ dbip_state_dir }}/state.json
 Environment=DBIP_AUDIT_FILE={{ dbip_log_dir }}/audit.jsonl
 ExecStart={{ dbip_install_root }}/venv/bin/gunicorn \

@@ -16,6 +16,17 @@
   loop_control:
     label: "{{ item.item }}"
 
+- name: Check permit-open config exists
+  ansible.builtin.stat:
+    path: "{{ dbip_etc_dir }}/permit-open.conf"
+  register: dbip_permit_open_conf
+
+- name: Assert permit-open config present
+  ansible.builtin.assert:
+    that:
+      - dbip_permit_open_conf.stat.exists
+      - dbip_permit_open_conf.stat.size > 0
+
 - name: Validate sshd config
   ansible.builtin.command: sshd -t
   changed_when: false

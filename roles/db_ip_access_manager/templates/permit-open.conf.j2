@@ -1,0 +1,3 @@
+# Generated from dbip_forward_destinations. Read by dbip-sshkey and the portal.
+# Do not put SSH options here — host:port CSV only.
+DBIP_PERMIT_OPEN={% for d in dbip_forward_destinations %}{{ d.host }}:{{ d.port }}{% if not loop.last %},{% endif %}{% endfor %}

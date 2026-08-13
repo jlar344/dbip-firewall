@@ -8,7 +8,8 @@ Paquete reproducible para el portal de acceso temporal a bases de datos
 - **Baseline** (`baseline/`): copia sanitizada de DeximDB tal como está hoy.
 - **Target** (`portal/`, `roles/`, `docs/`): especificación v1 — portal abre
   **solo** el puerto SSH de túnel (`dbip_ssh_port`, default 2224); las DB se
-  alcanzan únicamente vía `PermitOpen` a `127.0.0.1:3306/5432`.
+  alcanzan vía `PermitOpen` desde `dbip_forward_destinations` (p.ej. DeximDB
+  `3306,5432`; datacorp `127.0.0.1:6432`).
 
 Ver [docs/architecture.md](docs/architecture.md).
 

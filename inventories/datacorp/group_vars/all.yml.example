@@ -1,0 +1,22 @@
+---
+# datacorp-bbdd — tunnel to PgBouncer, not direct PostgreSQL.
+# Set dbip_ssh_host locally to the lab public address (portal UI + TLS CN).
+# Do not apply this inventory to production from this commit.
+dbip_ssh_port: 2224
+dbip_portal_port: 8889
+dbip_dynamic_firewall_ports:
+  - 2224
+dbip_forward_destinations:
+  - host: "127.0.0.1"
+    port: 6432
+# dbip_ssh_host: <lab public address>
+# dbip_users:
+#   - username: prod_jlar
+#     enabled: true
+#
+# Expected portal tunnel (after inventory dbip_ssh_host is set):
+#   ssh -p 2224 -N \
+#     -L 16432:127.0.0.1:6432 \
+#     prod_jlar@<dbip_ssh_host>
+#
+# Legacy UFW :6432 from the existing client IP stays until the post-tunnel gate.

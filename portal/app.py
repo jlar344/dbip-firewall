@@ -22,6 +22,8 @@ from functools import wraps
 from flask import Flask, flash, redirect, render_template_string, request, session
 from werkzeug.security import check_password_hash
 
+from permit_open import PermitOpenError, load_permit_open, local_listen_port
+
 USERS_FILE = os.environ.get("DBIP_USERS_FILE", "/etc/db-ip-portal/users.json")
 AUDIT_LOG_FILE = os.environ.get(
     "DBIP_AUDIT_FILE", "/var/log/db-ip-portal/audit.jsonl"
@@ -33,11 +35,7 @@ FIREWALL_BIN = os.environ.get("DBIP_FIREWALL_BIN", "/usr/local/sbin/dbip-firewal
 SSHKEY_BIN = os.environ.get("DBIP_SSHKEY_BIN", "/usr/local/sbin/dbip-sshkey")
 
 SSH_PORT = int(os.environ.get("DBIP_SSH_PORT", os.environ.get("SSH_PORT", "2224")))
-SSH_HOST = os.environ.get("DBIP_SSH_HOST", "195.114.216.26")
-FORWARD_MYSQL = os.environ.get("DBIP_FORWARD_MYSQL", "127.0.0.1:3306")
-FORWARD_PG = os.environ.get("DBIP_FORWARD_POSTGRES", "127.0.0.1:5432")
-LOCAL_MYSQL_PORT = int(os.environ.get("DBIP_LOCAL_MYSQL_PORT", "3307"))
-LOCAL_PG_PORT = int(os.environ.get("DBIP_LOCAL_PG_PORT", "15432"))
+SSH_HOST = os.environ.get("DBIP_SSH_HOST", "")
 
 LOGIN_USER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 PORTAL_USER_RE = re.compile(r"^prod_[A-Za-z0-9_.-]{1,64}$")
@@ -106,13 +104,12 @@ HTML = """
           <p class="ok">Llave SSH configurada para <strong>{{ user }}</strong>.</p>
           <p>Comando recomendado (solo túnel local; sin shell):</p>
           <pre>ssh -p {{ ssh_port }} -i ~/.ssh/{{ user }}_deximdb -N \\
-  -L {{ local_mysql }}:{{ forward_mysql }} \\
-  -L {{ local_pg }}:{{ forward_pg }} \\
-  {{ user }}@{{ ssh_host }}</pre>
+{% for f in forwards %}  -L {{ f.local_port }}:{{ f.dest }} \\
+{% endfor %}  {{ user }}@{{ ssh_host }}</pre>
 
-          <p>Luego conecta tus clientes así:</p>
-          <pre>MariaDB/MySQL: 127.0.0.1 puerto {{ local_mysql }}
-PostgreSQL:   127.0.0.1 puerto {{ local_pg }}</pre>
+          <p>Luego conecta tus clientes a <code>127.0.0.1</code> en el puerto local del túnel:</p>
+          <pre>{% for f in forwards %}127.0.0.1:{{ f.local_port }}  →  {{ f.dest }}
+{% endfor %}</pre>
         {% else %}
           <p class="err">No tienes llave SSH configurada.</p>
           <p>En tu equipo ejecuta:</p>
@@ -220,6 +217,17 @@ def get_key_status(username):
         return {"ok": False, "has_key": False, "error": result.stdout}
 
 
+def tunnel_forwards():
+    try:
+        dests = load_permit_open()
+    except PermitOpenError:
+        return []
+    return [
+        {"local_port": local_listen_port(port), "dest": f"{host}:{port}"}
+        for host, port in dests
+    ]
+
+
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -243,11 +251,8 @@ def index():
         registered_ip=registered_ip,
         key_status=key_status,
         ssh_port=SSH_PORT,
-        ssh_host=SSH_HOST,
-        forward_mysql=FORWARD_MYSQL,
-        forward_pg=FORWARD_PG,
-        local_mysql=LOCAL_MYSQL_PORT,
-        local_pg=LOCAL_PG_PORT,
+        ssh_host=SSH_HOST or "DBIP_SSH_HOST",
+        forwards=tunnel_forwards(),
     )
 
 

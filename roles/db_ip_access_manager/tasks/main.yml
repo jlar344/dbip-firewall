@@ -1,4 +1,12 @@
 ---
+- name: Require dbip_forward_destinations
+  ansible.builtin.assert:
+    that:
+      - dbip_forward_destinations | length > 0
+    fail_msg: >-
+      Set dbip_forward_destinations in inventory (list of {host, port}).
+      Example: [{host: "127.0.0.1", port: 6432}]
+
 - name: Include package tasks
   ansible.builtin.include_tasks: packages.yml
 

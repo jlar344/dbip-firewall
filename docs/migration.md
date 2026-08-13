@@ -16,6 +16,11 @@
 
 Work happens in `/home/jlar/db-ip-access-manager` only until a controlled apply.
 
+Lab (`scripts/lab-replace-ipauth.sh`): never deletes `LEGACY_DB_PORT` (6432).
+For datacorp run with `FORWARD_DESTINATIONS=127.0.0.1:6432` so PermitOpen
+matches PgBouncer. Default in the script is `127.0.0.1:5432` for hosts that
+are not pooler-fronted.
+
 ## Suggested migrate steps (later)
 
 1. Backup: unit, sudoers, helpers, `state.json`, `users.json`, `user.rules`, sshd Match, fail2ban.

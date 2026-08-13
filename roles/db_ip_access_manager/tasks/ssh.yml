@@ -1,4 +1,10 @@
 ---
+- name: Require at least one forward destination
+  ansible.builtin.assert:
+    that:
+      - dbip_forward_destinations | length > 0
+    fail_msg: "Set dbip_forward_destinations in inventory (host:port list)."
+
 - name: Deploy sshd Match drop-in for prod_*
   ansible.builtin.template:
     src: sshd-dbip.conf.j2

@@ -1,0 +1,7 @@
+---
+all:
+  hosts:
+    datacorp-bbdd:
+      ansible_host: CHANGE_ME
+      ansible_user: u_datacorp
+      ansible_become: true

@@ -3,28 +3,30 @@
 #
 # This script does NOT remove legacy PgBouncer UFW access (default port 6432).
 # Retire that rule in a later, explicit step after the SSH tunnel is validated:
-#   prod_* → :SSH_PORT → 127.0.0.1:5432
+#   prod_* → :SSH_PORT → FORWARD_DESTINATIONS (datacorp: 127.0.0.1:6432)
 #
 # Required (no defaults for host-specific values):
 #   SRC          unpacked db-ip-access-manager tree on the target host
 #   LAB_HOST     public/DNS name used in TLS CN and portal SSH instructions
 #
 # Optional:
-#   LEGACY_ALLOWED_IP   documented only; never used to delete UFW rules
-#   ENSURE_USERS        space-separated Unix accounts to create (e.g. prod_jlar)
-#   IPAUTH_PORT         old HTTP portal port to drop from UFW if different (8889)
-#   PORTAL_PORT         new portal listen port (8889 HTTP lab / 8443 TLS)
-#   USE_TLS             1 to bind gunicorn with tls.crt/tls.key
-#   SSH_PORT            tunnel SSH port (2224)
-#   ADMIN_SSH_PORT      admin SSH port (22)
-#   LEGACY_DB_PORT      pgbouncer/legacy port that must not be deleted (6432)
-#   BACKUP_ROOT         backup parent directory (/root)
+#   LEGACY_ALLOWED_IP     documented only; never used to delete UFW rules
+#   ENSURE_USERS          space-separated Unix accounts to create (e.g. prod_jlar)
+#   IPAUTH_PORT           old HTTP portal port to drop from UFW if different (8889)
+#   PORTAL_PORT           new portal listen port (8889 HTTP lab / 8443 TLS)
+#   USE_TLS               1 to bind gunicorn with tls.crt/tls.key
+#   SSH_PORT              tunnel SSH port (2224)
+#   ADMIN_SSH_PORT        admin SSH port (22)
+#   LEGACY_DB_PORT        pgbouncer/legacy port that must not be deleted (6432)
+#   FORWARD_DESTINATIONS  CSV host:port for PermitOpen (default 127.0.0.1:5432)
+#   BACKUP_ROOT           backup parent directory (/root)
 #
 # Usage (as root on the lab host):
 #   SRC=/path/to/db-ip-access-manager \
 #   LAB_HOST=lab.example.internal \
 #   ENSURE_USERS=prod_example \
 #   LEGACY_ALLOWED_IP=192.0.2.10 \
+#   FORWARD_DESTINATIONS=127.0.0.1:6432 \
 #   bash scripts/lab-replace-ipauth.sh
 set -euo pipefail
 
@@ -38,7 +40,26 @@ USE_TLS="${USE_TLS:-0}"
 SSH_PORT="${SSH_PORT:-2224}"
 ADMIN_SSH_PORT="${ADMIN_SSH_PORT:-22}"
 LEGACY_DB_PORT="${LEGACY_DB_PORT:-6432}"
+FORWARD_DESTINATIONS="${FORWARD_DESTINATIONS:-127.0.0.1:5432}"
+FORWARD_DESTINATIONS="${FORWARD_DESTINATIONS// /}"
 BACKUP_ROOT="${BACKUP_ROOT:-/root}"
+
+export SRC FORWARD_DESTINATIONS
+eval "$(
+  python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.environ["SRC"], "portal"))
+from permit_open import format_csv, format_sshd_permitopen, parse_permit_open
+
+dests = parse_permit_open(os.environ["FORWARD_DESTINATIONS"])
+print("PERMIT_OPEN_CSV='%s'" % format_csv(dests))
+print("PERMIT_OPEN_SPACES='%s'" % format_sshd_permitopen(dests))
+PY
+)"
+: "${PERMIT_OPEN_CSV:?invalid FORWARD_DESTINATIONS}"
+: "${PERMIT_OPEN_SPACES:?invalid FORWARD_DESTINATIONS}"
 
 PORTAL_USER=dbipportal
 PORTAL_GROUP=dbipportal
@@ -54,7 +75,7 @@ if [[ ${EUID} -ne 0 ]]; then
   echo "Run as root" >&2
   exit 1
 fi
-if [[ ! -d "${SRC}/portal" || ! -f "${SRC}/roles/db_ip_access_manager/files/dbip-firewall" ]]; then
+if [[ ! -d "${SRC}/portal" || ! -f "${SRC}/portal/permit_open.py" || ! -f "${SRC}/roles/db_ip_access_manager/files/dbip-firewall" ]]; then
   echo "Source tree missing at ${SRC}" >&2
   exit 1
 fi
@@ -110,7 +131,7 @@ fi
 
 if [[ -n "${LEGACY_ALLOWED_IP}" ]]; then
   echo "==> Legacy access left in place: ${LEGACY_DB_PORT}/tcp from ${LEGACY_ALLOWED_IP}"
-  echo "    Do not remove until tunnel prod_* -> :${SSH_PORT} -> 127.0.0.1:5432 is validated."
+  echo "    Do not remove until tunnel prod_* -> :${SSH_PORT} -> ${PERMIT_OPEN_CSV} is validated."
 fi
 
 if [[ -d /opt/ipauth ]]; then
@@ -142,6 +163,7 @@ install -d -o root -g "${PORTAL_GROUP}" -m 0750 "${INSTALL_ROOT}" "${ETC}" "${ST
 echo "==> Portal files + venv"
 install -o root -g "${PORTAL_GROUP}" -m 0640 "${SRC}/portal/app.py" "${INSTALL_ROOT}/app.py"
 install -o root -g "${PORTAL_GROUP}" -m 0750 "${SRC}/portal/add_user.py" "${INSTALL_ROOT}/add_user.py"
+install -o root -g "${PORTAL_GROUP}" -m 0640 "${SRC}/portal/permit_open.py" "${INSTALL_ROOT}/permit_open.py"
 install -o root -g "${PORTAL_GROUP}" -m 0640 "${SRC}/portal/requirements.txt" "${INSTALL_ROOT}/requirements.txt"
 if [[ ! -x "${INSTALL_ROOT}/venv/bin/python" ]]; then
   python3 -m venv "${INSTALL_ROOT}/venv"
@@ -180,11 +202,20 @@ DBIP_SECRET=${generated_secret}
 DBIP_SSH_HOST=${LAB_HOST}
 DBIP_SSH_PORT=${SSH_PORT}
 DBIP_SESSION_MINUTES=5
+DBIP_PERMIT_OPEN=${PERMIT_OPEN_CSV}
 EOF
   unset generated_secret
 fi
-chown root:"${PORTAL_GROUP}" "${ETC}/db-ip-portal.env"
-chmod 0640 "${ETC}/db-ip-portal.env"
+if grep -q '^DBIP_PERMIT_OPEN=' "${ETC}/db-ip-portal.env"; then
+  sed -i "s|^DBIP_PERMIT_OPEN=.*|DBIP_PERMIT_OPEN=${PERMIT_OPEN_CSV}|" "${ETC}/db-ip-portal.env"
+else
+  printf 'DBIP_PERMIT_OPEN=%s\n' "${PERMIT_OPEN_CSV}" >>"${ETC}/db-ip-portal.env"
+fi
+cat >"${ETC}/permit-open.conf" <<EOF
+DBIP_PERMIT_OPEN=${PERMIT_OPEN_CSV}
+EOF
+chown root:"${PORTAL_GROUP}" "${ETC}/db-ip-portal.env" "${ETC}/permit-open.conf"
+chmod 0640 "${ETC}/db-ip-portal.env" "${ETC}/permit-open.conf"
 
 echo "==> Migrate portal password hashes from ipauth sqlite (prod_ prefix)"
 python3 - <<PY
@@ -234,14 +265,14 @@ cat >/etc/ssh/sshd_config.d/00-dbip-ports.conf <<EOF
 Port ${ADMIN_SSH_PORT}
 Port ${SSH_PORT}
 EOF
-cat >/etc/ssh/sshd_config.d/50-dbip-prod.conf <<'EOF'
+cat >/etc/ssh/sshd_config.d/50-dbip-prod.conf <<EOF
 Match User prod_*
     PasswordAuthentication no
     KbdInteractiveAuthentication no
     PubkeyAuthentication yes
     AllowTcpForwarding local
     GatewayPorts no
-    PermitOpen 127.0.0.1:3306 127.0.0.1:5432
+    PermitOpen ${PERMIT_OPEN_SPACES}
     PermitTTY no
     X11Forwarding no
     AllowAgentForwarding no
@@ -279,10 +310,11 @@ Group=${PORTAL_GROUP}
 WorkingDirectory=${INSTALL_ROOT}
 EnvironmentFile=-${ETC}/db-ip-portal.env
 Environment=DBIP_SSH_PORT=${SSH_PORT}
+Environment=DBIP_SSH_HOST=${LAB_HOST}
 Environment=DBIP_DYNAMIC_PORTS=${SSH_PORT}
 Environment=DBIP_FIREWALL_PROVIDER=ufw
-Environment=DBIP_FORWARD_MYSQL=127.0.0.1:3306
-Environment=DBIP_FORWARD_POSTGRES=127.0.0.1:5432
+Environment=DBIP_PERMIT_OPEN=${PERMIT_OPEN_CSV}
+Environment=DBIP_INSTALL_ROOT=${INSTALL_ROOT}
 Environment=DBIP_STATE_FILE=${STATE}/state.json
 Environment=DBIP_AUDIT_FILE=${LOGDIR}/audit.jsonl
 Environment=DBIP_USERS_FILE=${ETC}/users.json

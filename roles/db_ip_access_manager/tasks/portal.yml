@@ -22,7 +22,17 @@
   loop:
     - app.py
     - add_user.py
+    - permit_open.py
     - requirements.txt
+  notify: Restart db-ip-portal
+
+- name: Deploy permit-open shared config
+  ansible.builtin.template:
+    src: permit-open.conf.j2
+    dest: "{{ dbip_etc_dir }}/permit-open.conf"
+    owner: root
+    group: "{{ dbip_portal_group }}"
+    mode: "0640"
   notify: Restart db-ip-portal
 
 # venv / pip install left for follow-up task once lab host available

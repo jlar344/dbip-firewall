@@ -66,14 +66,42 @@ sudo NOPASSWD
                   sshd Match
                      │
               local forwarding
-                  /       \
-                 ▼         ▼
-             127.0.0.1  127.0.0.1
-               :3306       :5432
+                     │
+                     ▼
+          dbip_forward_destinations
+          (inventory → PermitOpen)
 ```
 
 **Important:** the portal opens **only** SSH port `2224` dynamically.
 Databases are reached exclusively via local forwarding (`PermitOpen`).
+
+Single source of truth: `dbip_forward_destinations` in inventory feeds:
+
+```
+inventory
+   ├── sshd Match User prod_* → PermitOpen
+   ├── dbip-sshkey → permitopen="host:port" in authorized_keys
+   └── portal → ssh -L instructions (local port = dest + 10000)
+```
+
+Examples:
+
+```yaml
+# DeximDB-style both engines
+dbip_forward_destinations:
+  - host: "127.0.0.1"
+    port: 3306
+  - host: "127.0.0.1"
+    port: 5432
+
+# datacorp-bbdd (PgBouncer; do not use 5432 — that bypasses the pooler)
+dbip_forward_destinations:
+  - host: "127.0.0.1"
+    port: 6432
+```
+
+Runtime copy: `/etc/db-ip-portal/permit-open.conf` (`DBIP_PERMIT_OPEN=127.0.0.1:6432`).
+`dbip-sshkey` parses CSV `host:port` only and rejects SSH options.
 
 ## 4. Network policy (new DB hosts)
 
@@ -83,10 +111,40 @@ Databases are reached exclusively via local forwarding (`PermitOpen`).
 | 2224 | prod_* tunnel SSH | Portal-registered IP |
 | 8443 | Portal | Per defined policy |
 | 3306 | MariaDB | **Not public** (prefer 127.0.0.1) |
-| 5432 | PgBouncer/PG | **Not public** (prefer 127.0.0.1) |
+| 5432 | PostgreSQL | **Not public** (prefer 127.0.0.1) |
+| 6432 | PgBouncer (datacorp) | **Not public** via portal; legacy IP allow stays until gate |
 
 DeximDB’s current `5432 ALLOW Anywhere` is **out of scope for v1 packaging**.
 Document and remediate after the reproducible system is tested (P1).
+
+datacorp-bbdd target path (do **not** forward to `:5432`):
+
+```
+Cliente
+   │ SSH :2224
+   ▼
+prod_*
+   │ PermitOpen
+   ▼
+127.0.0.1:6432  PgBouncer (transaction)
+   ▼
+127.0.0.1:5432  PostgreSQL
+```
+
+### Post-tunnel gate (later — not this commit)
+
+Do not remove the legacy public/IP allow on `:6432` until all of these pass,
+then keep a short coexistence window and only then an explicit reversible revert:
+
+1. `sshd -t`
+2. `sshd -T` for a `prod_*` user → `permitopen 127.0.0.1:6432`
+3. `authorized_keys` → `permitopen="127.0.0.1:6432"`
+4. Portal opens only `2224`
+5. `ssh -p 2224` as `prod_*`
+6. Local tunnel → `127.0.0.1:6432`
+7. `psql` through PgBouncer
+8. Real app through the tunnel
+9. A non-allowed dest (e.g. `:9999`) is rejected
 
 ## 5. Component contracts
 
@@ -113,13 +171,13 @@ ufw allow from IP to any port 2224 proto tcp comment 'dbip-portal:2224'
 
 - Managed block markers preserved.
 - **Multiple keys** allowed inside the block.
-- Each key: `restrict,port-forwarding,permitopen="127.0.0.1:3306",permitopen="127.0.0.1:5432"`.
-- Depth-in-defense with identical `Match User prod_*` in sshd.
+- Each key: `restrict,port-forwarding,permitopen="host:port"` from `DBIP_PERMIT_OPEN`.
+- Depth-in-defense with identical `Match User prod_*` `PermitOpen` in sshd.
 
 ### Portal
 
 - Does **not** create Unix users.
-- Uses `SSH_PORT` / `DBIP_SSH_PORT` for all UI commands.
+- Uses `SSH_PORT` / `DBIP_SSH_PORT` and `DBIP_PERMIT_OPEN` for UI commands.
 - Auth failures emit machine-parseable lines for fail2ban (`DBIP_AUTH_FAIL ...`).
 - Secret from env file only.
 
