@@ -1,0 +1,12 @@
+# Managed by Ansible — db_ip_access_manager
+Match User prod_*
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PubkeyAuthentication yes
+    AllowTcpForwarding local
+    GatewayPorts no
+    PermitOpen {{ dbip_forward_mysql }} {{ dbip_forward_postgres }}
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    ForceCommand /bin/false

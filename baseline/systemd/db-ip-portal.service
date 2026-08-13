@@ -1,0 +1,26 @@
+[Unit]
+Description=DB IP Portal for DeximDB
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=dbipportal
+Group=dbipportal
+WorkingDirectory=/opt/db-ip-portal
+Environment=DBIP_SECRET=<REDACTED_ROTATE_ON_MIGRATE>
+ExecStart=/opt/db-ip-portal/venv/bin/gunicorn \
+  --workers 2 \
+  --bind 0.0.0.0:8443 \
+  --certfile /etc/db-ip-portal/tls.crt \
+  --keyfile /etc/db-ip-portal/tls.key \
+  app:app
+Restart=always
+RestartSec=3
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/var/lib/db-ip-portal /etc/ufw /home
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart db-ip-portal
+  ansible.builtin.service:
+    name: db-ip-portal
+    state: restarted
+    enabled: true
+
+- name: Reload sshd
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded
+
+- name: Restart fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: restarted
+
+- name: Enable dbip-reset timer
+  ansible.builtin.systemd:
+    name: dbip-reset.timer
+    enabled: true
+    state: started

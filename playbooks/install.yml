@@ -1,0 +1,8 @@
+---
+# DO NOT run against DeximDB until lab verify passes.
+- name: Install DB IP Access Manager
+  hosts: dbip_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - role: db_ip_access_manager

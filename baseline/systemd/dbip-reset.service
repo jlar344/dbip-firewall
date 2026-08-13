@@ -1,0 +1,6 @@
+[Unit]
+Description=Reset DB IP Portal UFW rules
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dbip-ufw reset

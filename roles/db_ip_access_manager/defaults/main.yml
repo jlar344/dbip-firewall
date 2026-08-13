@@ -1,0 +1,58 @@
+---
+# db_ip_access_manager — target defaults (specification v1)
+
+dbip_portal_user: dbipportal
+dbip_portal_group: dbipportal
+
+dbip_install_root: /opt/db-ip-portal
+dbip_etc_dir: /etc/db-ip-portal
+dbip_state_dir: /var/lib/db-ip-portal
+dbip_log_dir: /var/log/db-ip-portal
+
+dbip_bind_address: "0.0.0.0"
+dbip_portal_port: 8443
+
+# Single source of truth for tunnel SSH port (fixes baseline 2222 bug)
+dbip_ssh_port: 2224
+dbip_admin_ssh_port: 22
+
+# Databases reachable only via local forward targets
+dbip_forward_mysql: "127.0.0.1:3306"
+dbip_forward_postgres: "127.0.0.1:5432"
+
+# Portal opens ONLY the tunnel SSH port dynamically
+dbip_dynamic_firewall_ports:
+  - "{{ dbip_ssh_port }}"
+
+dbip_firewall_provider: ufw
+dbip_firewall_comment_prefix: "dbip-portal"
+
+dbip_session_minutes: 5
+
+# Ansible-managed Unix accounts (portal cannot create users)
+dbip_users: []
+# Example:
+# dbip_users:
+#   - username: prod_jlar
+#     enabled: true
+
+dbip_manage_sshd_dropin: true
+dbip_sshd_dropin_path: /etc/ssh/sshd_config.d/50-dbip-prod.conf
+
+dbip_manage_fail2ban: true
+dbip_fail2ban_sshd_ports: "22,2224"
+dbip_fail2ban_maxretry: 4
+dbip_fail2ban_findtime: 10m
+dbip_fail2ban_bantime: 24h
+dbip_fail2ban_portal_jail: false  # enable when filter + log line stable
+
+dbip_reset_calendar: "Sat *-*-* 00:00:00"
+
+# Secrets / TLS — paths on controller or vault; never commit contents
+dbip_env_file: /etc/db-ip-portal/db-ip-portal.env
+dbip_tls_cert_dest: /etc/db-ip-portal/tls.crt
+dbip_tls_key_dest: /etc/db-ip-portal/tls.key
+# dbip_tls_certificate_src:
+# dbip_tls_private_key_src:
+
+dbip_sudoers_path: /etc/sudoers.d/db-ip-portal

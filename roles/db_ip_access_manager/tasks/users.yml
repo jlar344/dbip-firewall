@@ -1,0 +1,25 @@
+---
+- name: Ensure portal system group
+  ansible.builtin.group:
+    name: "{{ dbip_portal_group }}"
+    system: true
+
+- name: Ensure portal system user
+  ansible.builtin.user:
+    name: "{{ dbip_portal_user }}"
+    group: "{{ dbip_portal_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ dbip_install_root }}"
+    create_home: false
+
+- name: Ensure declared prod_* users exist
+  ansible.builtin.user:
+    name: "{{ item.username }}"
+    shell: /bin/bash
+    create_home: true
+    groups: users
+    append: true
+    state: "{{ 'present' if item.enabled | default(true) else 'absent' }}"
+  loop: "{{ dbip_users }}"
+  when: dbip_users | length > 0

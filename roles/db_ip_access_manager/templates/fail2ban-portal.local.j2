@@ -1,0 +1,10 @@
+# Placeholder — enable with dbip_fail2ban_portal_jail: true once filter is validated
+[db-ip-portal]
+enabled = false
+port = {{ dbip_portal_port }}
+filter = db-ip-portal
+logpath = /var/log/db-ip-portal/gunicorn-access.log
+            /var/log/syslog
+maxretry = 8
+findtime = 10m
+bantime = 1h

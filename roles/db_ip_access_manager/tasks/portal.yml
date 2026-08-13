@@ -1,0 +1,28 @@
+---
+- name: Ensure portal directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: "{{ dbip_portal_group }}"
+    mode: "0750"
+  loop:
+    - "{{ dbip_install_root }}"
+    - "{{ dbip_etc_dir }}"
+    - "{{ dbip_state_dir }}"
+    - "{{ dbip_log_dir }}"
+
+- name: Deploy portal application files
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../portal/{{ item }}"
+    dest: "{{ dbip_install_root }}/{{ item }}"
+    owner: root
+    group: "{{ dbip_portal_group }}"
+    mode: "0640"
+  loop:
+    - app.py
+    - add_user.py
+    - requirements.txt
+  notify: Restart db-ip-portal
+
+# venv / pip install left for follow-up task once lab host available

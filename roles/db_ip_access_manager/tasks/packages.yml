@@ -1,0 +1,13 @@
+---
+# Stub: install python3, venv, ufw/firewalld as needed.
+# Not applied to DeximDB until lab verify passes.
+- name: Ensure base packages
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-venv
+      - python3-pip
+      - openssh-server
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"

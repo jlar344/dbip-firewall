@@ -1,0 +1,35 @@
+# Secrets and runtime state — never commit
+*.env
+!*.env.example
+vault.yml
+**/vault.yml
+**/tls.key
+**/users.json
+**/state.json
+**/audit.jsonl
+**/audit.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Ansible
+*.retry
+.vault_pass
+.vault_pass.txt
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local inventories with real hosts (keep example)
+inventories/deximdb/hosts.yml
+inventories/deximdb/group_vars/all.yml
+!inventories/deximdb/group_vars/all.yml.example

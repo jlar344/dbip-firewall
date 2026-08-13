@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import sys
+import subprocess
+import ipaddress
+import tempfile
+import grp
+from datetime import datetime, timezone
+
+STATE_FILE = "/var/lib/db-ip-portal/state.json"
+PORTS = [2224, 5432]
+USER_RE = re.compile(r"^prod_[A-Za-z0-9_.-]{1,64}$")
+
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        return {}
+    with open(STATE_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_state(state):
+    directory = os.path.dirname(STATE_FILE)
+    fd, tmp = tempfile.mkstemp(prefix=".state.", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.chmod(tmp, 0o640)
+        os.chown(tmp, 0, grp.getgrnam("dbipportal").gr_gid)
+        os.replace(tmp, STATE_FILE)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+def run_ufw(args, check=True):
+    cmd = ["ufw"] + args
+    p = subprocess.run(cmd, text=True, capture_output=True)
+    if check and p.returncode != 0:
+        raise RuntimeError(f"ufw failed: {' '.join(cmd)}\n{p.stderr}\n{p.stdout}")
+    return p
+
+def validate_user(user):
+    if not USER_RE.match(user):
+        raise ValueError("Usuario inválido")
+    return user
+
+def validate_ip(ip):
+    return str(ipaddress.ip_address(ip))
+
+def allow_ip(ip):
+    for port in PORTS:
+        run_ufw([
+            "allow",
+            "from", ip,
+            "to", "any",
+            "port", str(port),
+            "proto", "tcp",
+            "comment", f"dbip-portal:{port}"
+        ])
+
+def delete_ip(ip):
+    for port in PORTS:
+        run_ufw([
+            "--force",
+            "delete",
+            "allow",
+            "from", ip,
+            "to", "any",
+            "port", str(port),
+            "proto", "tcp"
+        ], check=False)
+
+def users_using_ip(state, ip, exclude_user=None):
+    users = []
+    for user, data in state.items():
+        if user == exclude_user:
+            continue
+        if data.get("ip") == ip:
+            users.append(user)
+    return users
+
+def update(user, ip):
+    user = validate_user(user)
+    ip = validate_ip(ip)
+
+    state = load_state()
+    old_ip = state.get(user, {}).get("ip")
+
+    if old_ip and old_ip != ip:
+        if not users_using_ip(state, old_ip, exclude_user=user):
+            delete_ip(old_ip)
+
+    if not users_using_ip(state, ip, exclude_user=user):
+        allow_ip(ip)
+
+    state[user] = {
+        "ip": ip,
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    save_state(state)
+
+    print(json.dumps({
+        "ok": True,
+        "action": "update",
+        "user": user,
+        "ip": ip,
+        "old_ip": old_ip
+    }))
+
+def reset():
+    state = load_state()
+    ips = sorted({data.get("ip") for data in state.values() if data.get("ip")})
+
+    for ip in ips:
+        delete_ip(ip)
+
+    save_state({})
+
+    print(json.dumps({
+        "ok": True,
+        "action": "reset",
+        "removed_ips": ips
+    }))
+
+def status():
+    print(json.dumps(load_state(), indent=2, sort_keys=True))
+
+def main():
+    if len(sys.argv) < 2:
+        raise SystemExit("Uso: dbip-ufw update <usuario> <ip> | reset | status")
+
+    action = sys.argv[1]
+
+    if action == "update":
+        if len(sys.argv) != 4:
+            raise SystemExit("Uso: dbip-ufw update <usuario> <ip>")
+        update(sys.argv[2], sys.argv[3])
+    elif action == "reset":
+        reset()
+    elif action == "status":
+        status()
+    else:
+        raise SystemExit("Acción inválida")
+
+if __name__ == "__main__":
+    main()

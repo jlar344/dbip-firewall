@@ -1,0 +1,10 @@
+---
+# Placeholder — controlled DeximDB migration (not for first apply)
+- name: Migrate existing portal to packaged target
+  hosts: dbip_hosts
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Reminder
+      ansible.builtin.debug:
+        msg: "Use scripts/migrate-current-state.py and docs/migration.md. Do not blind-overwrite DeximDB."

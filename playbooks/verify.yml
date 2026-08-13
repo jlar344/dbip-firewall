@@ -1,0 +1,10 @@
+---
+- name: Verify DB IP Access Manager
+  hosts: dbip_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run role verify tasks only
+      ansible.builtin.include_role:
+        name: db_ip_access_manager
+        tasks_from: verify.yml

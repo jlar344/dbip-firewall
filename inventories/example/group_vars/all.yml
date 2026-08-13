@@ -1,0 +1,8 @@
+---
+# Example group vars — copy and fill secrets outside git
+dbip_ssh_host: lab-db01.example.com
+dbip_ssh_port: 2224
+dbip_users:
+  - username: prod_example
+    enabled: true
+# dbip_secret: set via --extra-vars or vault — required for env template

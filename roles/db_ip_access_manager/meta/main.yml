@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: db_ip_access_manager
+  description: Reproducible DB IP portal + tunnel SSH access manager
+  license: proprietary
+  min_ansible_version: "2.14"
+dependencies: []

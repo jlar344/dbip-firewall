@@ -1,0 +1,26 @@
+---
+- name: Install dbip-firewall helper
+  ansible.builtin.copy:
+    src: dbip-firewall
+    dest: /usr/local/sbin/dbip-firewall
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install dbip-sshkey helper
+  ansible.builtin.copy:
+    src: dbip-sshkey
+    dest: /usr/local/sbin/dbip-sshkey
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install sudoers for portal helpers
+  ansible.builtin.copy:
+    content: |
+      {{ dbip_portal_user }} ALL=(root) NOPASSWD: /usr/local/sbin/dbip-firewall, /usr/local/sbin/dbip-sshkey
+    dest: "{{ dbip_sudoers_path }}"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"

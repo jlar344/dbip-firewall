@@ -1,0 +1,417 @@
+#!/usr/bin/env python3
+"""dbip-firewall — provider-aware managed rules for DB IP Portal (target v1).
+
+Manages ONLY dynamic tunnel SSH port(s). Does not open DB ports.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import grp
+from datetime import datetime, timezone
+from ipaddress import ip_address
+
+STATE_FILE = os.environ.get("DBIP_STATE_FILE", "/var/lib/db-ip-portal/state.json")
+AUDIT_FILE = os.environ.get("DBIP_HELPER_AUDIT", "/var/log/db-ip-portal/helper-audit.jsonl")
+PROVIDER = os.environ.get("DBIP_FIREWALL_PROVIDER", "ufw")
+COMMENT_PREFIX = os.environ.get("DBIP_FIREWALL_COMMENT_PREFIX", "dbip-portal")
+PORTS = [
+    int(p)
+    for p in os.environ.get("DBIP_DYNAMIC_PORTS", "2224").split(",")
+    if p.strip()
+]
+USER_RE = re.compile(r"^prod_[A-Za-z0-9_.-]{1,64}$")
+
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def audit(action: str, **fields) -> None:
+    entry = {"timestamp": utcnow(), "component": "dbip-firewall", "action": action, **fields}
+    try:
+        os.makedirs(os.path.dirname(AUDIT_FILE), mode=0o755, exist_ok=True)
+        with open(AUDIT_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def load_state() -> dict:
+    if not os.path.exists(STATE_FILE):
+        return {"version": 1, "registrations": {}}
+    with open(STATE_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    # migrate flat baseline shape on read
+    if "registrations" not in data:
+        regs = {
+            u: {"ip": v.get("ip"), "updated_at": v.get("updated_at")}
+            for u, v in data.items()
+            if isinstance(v, dict) and v.get("ip")
+        }
+        return {"version": 1, "registrations": regs}
+    data.setdefault("version", 1)
+    data.setdefault("registrations", {})
+    return data
+
+
+def save_state(state: dict) -> None:
+    directory = os.path.dirname(STATE_FILE)
+    os.makedirs(directory, mode=0o755, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".state.", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.chmod(tmp, 0o640)
+        try:
+            os.chown(tmp, 0, grp.getgrnam("dbipportal").gr_gid)
+        except KeyError:
+            pass
+        os.replace(tmp, STATE_FILE)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def validate_ip(raw: str) -> str:
+    return str(ip_address(raw.strip()))
+
+
+def validate_user(user: str) -> str:
+    if not USER_RE.match(user):
+        raise ValueError("Usuario inválido")
+    return user
+
+
+def run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
+    p = subprocess.run(cmd, text=True, capture_output=True)
+    if check and p.returncode != 0:
+        raise RuntimeError(f"cmd failed: {' '.join(cmd)}\n{p.stderr}\n{p.stdout}")
+    return p
+
+
+def comment_for(port: int) -> str:
+    return f"{COMMENT_PREFIX}:{port}"
+
+
+class UfwProvider:
+    def allow(self, ip: str, port: int) -> None:
+        run(
+            [
+                "ufw",
+                "allow",
+                "from",
+                ip,
+                "to",
+                "any",
+                "port",
+                str(port),
+                "proto",
+                "tcp",
+                "comment",
+                comment_for(port),
+            ]
+        )
+
+    def delete(self, ip: str, port: int) -> None:
+        run(
+            [
+                "ufw",
+                "--force",
+                "delete",
+                "allow",
+                "from",
+                ip,
+                "to",
+                "any",
+                "port",
+                str(port),
+                "proto",
+                "tcp",
+            ],
+            check=False,
+        )
+
+    def list_managed(self) -> list[dict]:
+        """Parse `ufw status` numbered lines with our comment prefix."""
+        p = run(["ufw", "status", "numbered"], check=False)
+        out = []
+        for line in p.stdout.splitlines():
+            if COMMENT_PREFIX not in line:
+                continue
+            # e.g. [19] 2224/tcp  ALLOW IN  1.2.3.4  # dbip-portal:2224
+            m = re.search(
+                r"\[\s*\d+\]\s+(\d+)/tcp\s+ALLOW IN\s+(\S+).*#\s*("
+                + re.escape(COMMENT_PREFIX)
+                + r":\d+)",
+                line,
+            )
+            if not m:
+                continue
+            port, ip, comment = int(m.group(1)), m.group(2), m.group(3)
+            out.append({"ip": ip, "port": port, "comment": comment, "raw": line.strip()})
+        return out
+
+
+def get_provider():
+    if PROVIDER != "ufw":
+        raise SystemExit(f"Unsupported provider: {PROVIDER}")
+    return UfwProvider()
+
+
+def users_using_ip(state: dict, ip: str, exclude_user: str | None = None) -> list[str]:
+    users = []
+    for user, data in state.get("registrations", {}).items():
+        if user == exclude_user:
+            continue
+        if data.get("ip") == ip:
+            users.append(user)
+    return users
+
+
+def add_ip(ip: str) -> None:
+    ip = validate_ip(ip)
+    provider = get_provider()
+    existing = {(r["ip"], r["port"]) for r in provider.list_managed()}
+    for port in PORTS:
+        if (ip, port) not in existing:
+            provider.allow(ip, port)
+    audit("firewall_add", ip=ip, ports=PORTS, result="success")
+    print(json.dumps({"ok": True, "action": "add", "ip": ip, "ports": PORTS}))
+
+
+def remove_ip(ip: str) -> None:
+    ip = validate_ip(ip)
+    provider = get_provider()
+    for port in PORTS:
+        provider.delete(ip, port)
+    audit("firewall_remove", ip=ip, ports=PORTS, result="success")
+    print(json.dumps({"ok": True, "action": "remove", "ip": ip, "ports": PORTS}))
+
+
+def check_ip(ip: str) -> None:
+    ip = validate_ip(ip)
+    provider = get_provider()
+    managed = [r for r in provider.list_managed() if r["ip"] == ip]
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "action": "check",
+                "ip": ip,
+                "present": bool(managed),
+                "rules": managed,
+            },
+            indent=2,
+        )
+    )
+
+
+def list_rules() -> None:
+    provider = get_provider()
+    print(json.dumps({"ok": True, "action": "list", "rules": provider.list_managed()}, indent=2))
+
+
+def update_user(user: str, ip: str) -> None:
+    """Portal compatibility: register user→ip and ensure firewall allow."""
+    user = validate_user(user)
+    ip = validate_ip(ip)
+    provider = get_provider()
+    state = load_state()
+    regs = state.setdefault("registrations", {})
+    old_ip = regs.get(user, {}).get("ip")
+
+    if old_ip and old_ip != ip and not users_using_ip(state, old_ip, exclude_user=user):
+        for port in PORTS:
+            provider.delete(old_ip, port)
+
+    existing = {(r["ip"], r["port"]) for r in provider.list_managed()}
+    if not users_using_ip(state, ip, exclude_user=user):
+        for port in PORTS:
+            if (ip, port) not in existing:
+                provider.allow(ip, port)
+
+    regs[user] = {"ip": ip, "updated_at": utcnow()}
+    save_state(state)
+    audit(
+        "firewall_update",
+        user=user,
+        old_ip=old_ip,
+        new_ip=ip,
+        ports=PORTS,
+        result="success",
+    )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "action": "update",
+                "user": user,
+                "ip": ip,
+                "old_ip": old_ip,
+                "ports": PORTS,
+            }
+        )
+    )
+
+
+def reset() -> None:
+    """Remove managed rules for configured ports only; clear registrations."""
+    provider = get_provider()
+    state = load_state()
+    managed = provider.list_managed()
+    removed = []
+    for rule in managed:
+        if rule["port"] not in PORTS:
+            continue
+        if not rule["comment"].startswith(COMMENT_PREFIX + ":"):
+            continue
+        provider.delete(rule["ip"], rule["port"])
+        removed.append(rule)
+
+    # Also delete by state IPs (covers parse misses)
+    for data in state.get("registrations", {}).values():
+        ip = data.get("ip")
+        if not ip:
+            continue
+        for port in PORTS:
+            provider.delete(ip, port)
+
+    save_state({"version": 1, "registrations": {}})
+    audit("firewall_reset", removed=removed, result="success")
+    print(json.dumps({"ok": True, "action": "reset", "removed": removed}, indent=2))
+
+
+def reconcile() -> None:
+    provider = get_provider()
+    state = load_state()
+    managed = provider.list_managed()
+    state_ips = {
+        data["ip"]
+        for data in state.get("registrations", {}).values()
+        if data.get("ip")
+    }
+    managed_by_port = {}
+    findings = []
+
+    for rule in managed:
+        managed_by_port.setdefault(rule["ip"], set()).add(rule["port"])
+        if rule["port"] not in PORTS:
+            findings.append(
+                {
+                    "type": "unexpected_port",
+                    "ip": rule["ip"],
+                    "port": rule["port"],
+                    "comment": rule["comment"],
+                }
+            )
+        expected_comment = comment_for(rule["port"])
+        if rule["comment"] != expected_comment:
+            findings.append(
+                {
+                    "type": "invalid_managed_rule",
+                    "ip": rule["ip"],
+                    "port": rule["port"],
+                    "comment": rule["comment"],
+                }
+            )
+
+    for ip, ports in managed_by_port.items():
+        if len(ports) != len(set(ports)):
+            findings.append({"type": "duplicate_rule", "ip": ip, "ports": sorted(ports)})
+        if ip not in state_ips:
+            findings.append(
+                {
+                    "type": "managed_rule_without_state",
+                    "ip": ip,
+                    "ports": sorted(ports),
+                }
+            )
+
+    for ip in state_ips:
+        present_ports = managed_by_port.get(ip, set())
+        missing = [p for p in PORTS if p not in present_ports]
+        if missing:
+            findings.append(
+                {
+                    "type": "state_without_firewall_rule",
+                    "ip": ip,
+                    "missing_ports": missing,
+                }
+            )
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "action": "reconcile",
+                "findings": findings,
+                "apply": False,
+            },
+            indent=2,
+        )
+    )
+
+
+def status() -> None:
+    print(json.dumps(load_state(), indent=2, sort_keys=True))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="dbip-firewall")
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    p_add = sub.add_parser("add")
+    p_add.add_argument("ip")
+
+    p_rm = sub.add_parser("remove")
+    p_rm.add_argument("ip")
+
+    p_ck = sub.add_parser("check")
+    p_ck.add_argument("ip")
+
+    sub.add_parser("list")
+    sub.add_parser("reset")
+    sub.add_parser("reconcile")
+    sub.add_parser("status")
+
+    # Portal-compatible
+    p_up = sub.add_parser("update")
+    p_up.add_argument("user")
+    p_up.add_argument("ip")
+
+    args = parser.parse_args()
+    try:
+        if args.action == "add":
+            add_ip(args.ip)
+        elif args.action == "remove":
+            remove_ip(args.ip)
+        elif args.action == "check":
+            check_ip(args.ip)
+        elif args.action == "list":
+            list_rules()
+        elif args.action == "reset":
+            reset()
+        elif args.action == "reconcile":
+            reconcile()
+        elif args.action == "status":
+            status()
+        elif args.action == "update":
+            update_user(args.user, args.ip)
+    except Exception as e:
+        audit(args.action, result="error", error=str(e)[-300:])
+        print(json.dumps({"ok": False, "error": str(e)}))
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

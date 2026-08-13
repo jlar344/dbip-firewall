@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""dbip-sshkey — managed authorized_keys for prod_* tunnel users (target v1).
+
+Supports multiple keys inside the managed block (add/list/remove-by-fingerprint).
+"""
+from __future__ import annotations
+
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+import tempfile
+
+USER_RE = re.compile(r"^prod_[A-Za-z0-9_.-]{1,64}$")
+ALLOWED_KEY_TYPES = {
+    "ssh-ed25519",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "sk-ssh-ed25519@openssh.com",
+    "ssh-rsa",
+}
+
+BEGIN = "# BEGIN db-ip-portal managed key"
+END = "# END db-ip-portal managed key"
+
+FORWARD_MYSQL = os.environ.get("DBIP_FORWARD_MYSQL", "127.0.0.1:3306")
+FORWARD_PG = os.environ.get("DBIP_FORWARD_POSTGRES", "127.0.0.1:5432")
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(json.dumps({"ok": False, "error": message}))
+    raise SystemExit(code)
+
+
+def key_options_prefix() -> str:
+    return (
+        "restrict,port-forwarding,"
+        f'permitopen="{FORWARD_MYSQL}",'
+        f'permitopen="{FORWARD_PG}" '
+    )
+
+
+def validate_user(username: str):
+    if not USER_RE.match(username):
+        fail("Usuario inválido. Debe iniciar con prod_")
+    try:
+        info = pwd.getpwnam(username)
+    except KeyError:
+        fail("El usuario Linux no existe")
+    if not info.pw_dir.startswith("/home/"):
+        fail("Home inválido para el usuario")
+    return info
+
+
+def auth_file(info):
+    ssh_dir = os.path.join(info.pw_dir, ".ssh")
+    return ssh_dir, os.path.join(ssh_dir, "authorized_keys")
+
+
+def read_auth(info) -> str:
+    _, path = auth_file(info)
+    if not os.path.exists(path):
+        return ""
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def split_sections(content: str):
+    """Return (before, managed_lines, after)."""
+    lines = content.splitlines()
+    before, managed, after = [], [], []
+    mode = "before"
+    for line in lines:
+        stripped = line.strip()
+        if stripped == BEGIN:
+            mode = "managed"
+            continue
+        if stripped == END:
+            mode = "after"
+            continue
+        if mode == "before":
+            before.append(line)
+        elif mode == "managed":
+            managed.append(line)
+        else:
+            after.append(line)
+    return before, managed, after
+
+
+def write_auth(info, before, managed, after) -> None:
+    ssh_dir, path = auth_file(info)
+    os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+    os.chown(ssh_dir, info.pw_uid, info.pw_gid)
+    os.chmod(ssh_dir, 0o700)
+
+    out = list(before)
+    out.append(BEGIN)
+    out.extend(managed)
+    out.append(END)
+    out.extend(after)
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out).strip() + "\n")
+
+    os.chown(path, info.pw_uid, info.pw_gid)
+    os.chmod(path, 0o600)
+
+
+def fingerprint_of(public_key: str) -> str:
+    fd, tmp = tempfile.mkstemp(prefix="dbip-key.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(public_key.strip() + "\n")
+        result = subprocess.run(
+            ["ssh-keygen", "-lf", tmp], text=True, capture_output=True
+        )
+        if result.returncode != 0:
+            fail("No se pudo obtener fingerprint")
+        # format: 256 SHA256:xxx comment (TYPE)
+        parts = result.stdout.split()
+        return parts[1] if len(parts) > 1 else result.stdout.strip()
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def validate_public_key(public_key: str) -> str:
+    public_key = public_key.strip()
+    if "\n" in public_key or "\r" in public_key:
+        fail("Pega solo una llave pública en una línea")
+    parts = public_key.split()
+    if len(parts) < 2:
+        fail("Formato de llave pública inválido")
+    if parts[0] not in ALLOWED_KEY_TYPES:
+        fail(f"Tipo de llave no permitido: {parts[0]}")
+
+    fd, tmp = tempfile.mkstemp(prefix="dbip-key.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(public_key + "\n")
+        result = subprocess.run(
+            ["ssh-keygen", "-l", "-f", tmp], text=True, capture_output=True
+        )
+        if result.returncode != 0:
+            fail("La llave pública no es válida")
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return public_key
+
+
+def bare_key_blob(line: str) -> str | None:
+    """Extract 'type keydata' from an options-prefixed authorized_keys line."""
+    for i, tok in enumerate(line.split()):
+        if tok in ALLOWED_KEY_TYPES or tok.startswith("sk-"):
+            parts = line.split()
+            # type + keydata (+ optional comment)
+            return " ".join(parts[i : i + 2])
+    return None
+
+
+def has_managed_key(info) -> bool:
+    _, managed, _ = split_sections(read_auth(info))
+    for line in managed:
+        s = line.strip()
+        if s and not s.startswith("#"):
+            return True
+    return False
+
+
+def list_keys(username: str) -> None:
+    info = validate_user(username)
+    _, managed, _ = split_sections(read_auth(info))
+    keys = []
+    for line in managed:
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        blob = bare_key_blob(s)
+        if not blob:
+            continue
+        keys.append(
+            {
+                "fingerprint": fingerprint_of(blob),
+                "key_type": blob.split()[0],
+            }
+        )
+    print(json.dumps({"ok": True, "user": username, "keys": keys, "count": len(keys)}))
+
+
+def install_key(username: str) -> None:
+    """Add a key to the managed block (multi-key). Replaces same key blob if present."""
+    info = validate_user(username)
+    public_key = validate_public_key(sys.stdin.read(8192))
+    blob = " ".join(public_key.split()[:2])
+    before, managed, after = split_sections(read_auth(info))
+
+    new_managed = []
+    for line in managed:
+        existing_blob = bare_key_blob(line.strip()) if line.strip() else None
+        if existing_blob and existing_blob == blob:
+            continue  # replace
+        if line.strip():
+            new_managed.append(line)
+
+    new_managed.append(key_options_prefix() + public_key)
+    write_auth(info, before, new_managed, after)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "user": username,
+                "has_key": True,
+                "fingerprint": fingerprint_of(blob),
+                "count": len(new_managed),
+            }
+        )
+    )
+
+
+def status(username: str) -> None:
+    info = validate_user(username)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "user": username,
+                "has_key": has_managed_key(info),
+            }
+        )
+    )
+
+
+def main() -> None:
+    if len(sys.argv) < 3:
+        fail(
+            "Uso: dbip-sshkey status|list|install <usuario>"
+        )
+    action, username = sys.argv[1], sys.argv[2]
+    if action == "status":
+        status(username)
+    elif action == "list":
+        list_keys(username)
+    elif action == "install":
+        install_key(username)
+    else:
+        fail("Acción inválida")
+
+
+if __name__ == "__main__":
+    main()

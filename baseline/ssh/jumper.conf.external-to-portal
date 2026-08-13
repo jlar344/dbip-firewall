@@ -1,0 +1,11 @@
+Match User prodjumper
+    PasswordAuthentication yes
+    PubkeyAuthentication no
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    AllowTcpForwarding local
+    GatewayPorts no
+    PermitTunnel no
+    PermitOpen 127.0.0.1:3306
+    PermitOpen localhost:3306

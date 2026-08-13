@@ -1,0 +1,27 @@
+---
+- name: Check helpers exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/local/sbin/dbip-firewall
+    - /usr/local/sbin/dbip-sshkey
+  register: dbip_helper_stats
+
+- name: Assert helpers present
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.executable
+  loop: "{{ dbip_helper_stats.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Validate sshd config
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  when: dbip_manage_sshd_dropin | bool
+
+- name: Validate sudoers
+  ansible.builtin.command: "visudo -cf {{ dbip_sudoers_path }}"
+  changed_when: false
+  when: dbip_sudoers_path is defined

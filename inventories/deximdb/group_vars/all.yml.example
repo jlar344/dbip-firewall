@@ -1,0 +1,9 @@
+---
+# DeximDB inventory placeholder — do not put live secrets here.
+# Copy to hosts.yml / all.yml locally (gitignored patterns apply).
+dbip_ssh_host: 195.114.216.26
+dbip_ssh_port: 2224
+dbip_dynamic_firewall_ports:
+  - 2224
+# After cutover only:
+# dbip_users: [...]  # declare enabled prod_* for Ansible ownership

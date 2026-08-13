@@ -1,0 +1,33 @@
+[Unit]
+Description=DB IP Portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ dbip_portal_user }}
+Group={{ dbip_portal_group }}
+WorkingDirectory={{ dbip_install_root }}
+EnvironmentFile=-{{ dbip_env_file }}
+Environment=DBIP_SSH_PORT={{ dbip_ssh_port }}
+Environment=DBIP_DYNAMIC_PORTS={{ dbip_dynamic_firewall_ports | join(',') }}
+Environment=DBIP_FIREWALL_PROVIDER={{ dbip_firewall_provider }}
+Environment=DBIP_FORWARD_MYSQL={{ dbip_forward_mysql }}
+Environment=DBIP_FORWARD_POSTGRES={{ dbip_forward_postgres }}
+Environment=DBIP_STATE_FILE={{ dbip_state_dir }}/state.json
+Environment=DBIP_AUDIT_FILE={{ dbip_log_dir }}/audit.jsonl
+ExecStart={{ dbip_install_root }}/venv/bin/gunicorn \
+  --workers 2 \
+  --bind {{ dbip_bind_address }}:{{ dbip_portal_port }} \
+  --certfile {{ dbip_tls_cert_dest }} \
+  --keyfile {{ dbip_tls_key_dest }} \
+  app:app
+Restart=always
+RestartSec=3
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths={{ dbip_state_dir }} {{ dbip_log_dir }} /etc/ufw /home
+
+[Install]
+WantedBy=multi-user.target

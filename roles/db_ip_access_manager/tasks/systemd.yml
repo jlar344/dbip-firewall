@@ -1,0 +1,49 @@
+---
+- name: Deploy portal systemd unit
+  ansible.builtin.template:
+    src: db-ip-portal.service.j2
+    dest: /etc/systemd/system/db-ip-portal.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart db-ip-portal
+
+- name: Deploy reset oneshot
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Reset DB IP Portal managed firewall rules
+
+      [Service]
+      Type=oneshot
+      Environment=DBIP_DYNAMIC_PORTS={{ dbip_dynamic_firewall_ports | join(',') }}
+      Environment=DBIP_FIREWALL_PROVIDER={{ dbip_firewall_provider }}
+      Environment=DBIP_STATE_FILE={{ dbip_state_dir }}/state.json
+      ExecStart=/usr/local/sbin/dbip-firewall reset
+    dest: /etc/systemd/system/dbip-reset.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy reset timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run DB IP Portal firewall reset on schedule
+
+      [Timer]
+      OnCalendar={{ dbip_reset_calendar }}
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/dbip-reset.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Enable dbip-reset timer

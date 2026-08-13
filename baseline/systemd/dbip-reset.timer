@@ -1,0 +1,9 @@
+[Unit]
+Description=Run DB IP Portal reset every Saturday
+
+[Timer]
+OnCalendar=Sat *-*-* 00:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

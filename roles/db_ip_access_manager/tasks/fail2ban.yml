@@ -1,0 +1,19 @@
+---
+- name: Deploy fail2ban sshd jail
+  ansible.builtin.template:
+    src: fail2ban-sshd.local.j2
+    dest: /etc/fail2ban/jail.d/sshd-dbip.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Deploy fail2ban portal jail stub
+  ansible.builtin.template:
+    src: fail2ban-portal.local.j2
+    dest: /etc/fail2ban/jail.d/db-ip-portal.local
+    owner: root
+    group: root
+    mode: "0644"
+  when: dbip_fail2ban_portal_jail | bool
+  notify: Restart fail2ban

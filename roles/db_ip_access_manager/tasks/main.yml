@@ -1,0 +1,26 @@
+---
+- name: Include package tasks
+  ansible.builtin.include_tasks: packages.yml
+
+- name: Include portal system user
+  ansible.builtin.include_tasks: users.yml
+
+- name: Include portal application
+  ansible.builtin.include_tasks: portal.yml
+
+- name: Include firewall helpers
+  ansible.builtin.include_tasks: firewall.yml
+
+- name: Include SSH Match drop-in
+  ansible.builtin.include_tasks: ssh.yml
+  when: dbip_manage_sshd_dropin | bool
+
+- name: Include fail2ban
+  ansible.builtin.include_tasks: fail2ban.yml
+  when: dbip_manage_fail2ban | bool
+
+- name: Include systemd units
+  ansible.builtin.include_tasks: systemd.yml
+
+- name: Include verify checks
+  ansible.builtin.include_tasks: verify.yml

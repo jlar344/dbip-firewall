@@ -1,0 +1,8 @@
+[sshd]
+enabled = true
+backend = systemd
+port = {{ dbip_fail2ban_sshd_ports }}
+maxretry = {{ dbip_fail2ban_maxretry }}
+findtime = {{ dbip_fail2ban_findtime }}
+bantime = {{ dbip_fail2ban_bantime }}
+ignoreip = 127.0.0.1/8 ::1
